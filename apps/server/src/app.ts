@@ -23,6 +23,45 @@ const SUPPORTED_IMAGE_TYPES = new Set([
   "image/webp",
 ]);
 
+const MAX_EXPORT_IMAGE_BYTES = 25 * 1024 * 1024;
+
+function referencedRemoteImage(content: string, rawUrl: string): URL | null {
+  let url: URL;
+  try {
+    url = new URL(rawUrl);
+  } catch {
+    return null;
+  }
+  if (url.protocol !== "http:" && url.protocol !== "https:") return null;
+  if (content.includes(rawUrl)) return url;
+  try {
+    return content.includes(decodeURI(rawUrl)) ? url : null;
+  } catch {
+    return null;
+  }
+}
+
+async function readLimitedResponse(response: Response): Promise<Buffer> {
+  const declaredSize = Number.parseInt(response.headers.get("content-length") ?? "0", 10);
+  if (declaredSize > MAX_EXPORT_IMAGE_BYTES) throw new Error("Remote image is too large.");
+  if (!response.body) return Buffer.alloc(0);
+
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    size += value.byteLength;
+    if (size > MAX_EXPORT_IMAGE_BYTES) {
+      await reader.cancel();
+      throw new Error("Remote image is too large.");
+    }
+    chunks.push(value);
+  }
+  return Buffer.concat(chunks.map((chunk) => Buffer.from(chunk)), size);
+}
+
 export interface AppDependencies {
   index: DocumentIndex;
   events: EventEmitter;
@@ -75,6 +114,39 @@ export async function createApp(config: AppConfig, dependencies?: AppDependencie
       return reply.header("content-type", contentType).header("cache-control", "no-store").send(data);
     } catch (error) {
       return reply.code(404).send({ message: error instanceof Error ? error.message : "Asset not found." });
+    }
+  });
+
+  app.get<{ Querystring: { path?: string; url?: string } }>("/api/export-asset", async (request, reply) => {
+    try {
+      const relativePath = normalizeRelativePath(request.query.path ?? "");
+      resolveWorkspacePath(config.workspaceRoot, relativePath, config.hiddenPaths);
+      const document = index.get(relativePath);
+      if (!document) return reply.code(404).send({ message: "Document not found." });
+
+      const remoteUrl = referencedRemoteImage(document.content, request.query.url ?? "");
+      if (!remoteUrl) {
+        return reply.code(403).send({ message: "The remote image is not referenced by this document." });
+      }
+
+      const response = await fetch(remoteUrl, {
+        headers: { "user-agent": "MarkdownNoteManager/0.1" },
+        redirect: "follow",
+        signal: AbortSignal.timeout(12_000),
+      });
+      if (!response.ok) {
+        return reply.code(502).send({ message: `Remote image request failed: ${response.status}` });
+      }
+      const contentType = response.headers.get("content-type")?.split(";", 1)[0]?.trim() ?? "";
+      if (!SUPPORTED_IMAGE_TYPES.has(contentType)) {
+        return reply.code(415).send({ message: "The remote resource is not a supported image." });
+      }
+      const data = await readLimitedResponse(response);
+      return reply.header("content-type", contentType).header("cache-control", "no-store").send(data);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Remote image export failed.";
+      const status = message.includes("too large") ? 413 : 502;
+      return reply.code(status).send({ message });
     }
   });
 

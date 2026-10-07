@@ -8,6 +8,7 @@ import {
 import { ArticleSearchBar } from "./ArticleSearchBar";
 import { getDocument, getDocuments, getGitStatus, getWorkspace, searchDocuments } from "./api";
 import { DocumentOutline } from "./DocumentOutline";
+import { ExportMenu } from "./ExportMenu";
 import { FolderTree } from "./FolderTree";
 import { MarkdownPreview } from "./MarkdownPreview";
 import { formatRelativeTime } from "./path-utils";
@@ -303,6 +304,13 @@ export default function App() {
                 <button onClick={() => { setSourceMode(false); setArticleSearchOpen(true); }} title="文内查找（Ctrl/Cmd+F）">⌕ <span>文内查找</span></button>
                 <button className={sourceMode ? "active" : ""} onClick={() => { setSourceMode((value) => !value); setArticleSearchOpen(false); setArticleQuery(""); }} title="查看源 Markdown">&lt;/&gt; <span>{sourceMode ? "阅读视图" : "查看源码"}</span></button>
                 <button onClick={() => void copyDocumentLink()} title="复制文章链接">⧉ <span>复制链接</span></button>
+                <ExportMenu
+                  document={activeDocument}
+                  getArticle={() => articleRootRef.current?.querySelector<HTMLElement>(".markdown-body") ?? null}
+                  theme={theme}
+                  onNotify={showToast}
+                  disabled={sourceMode}
+                />
                 <button className="details-toggle" onClick={() => setDetailsExpanded((value) => !value)} aria-expanded={detailsExpanded} title="显示文章信息">{detailsExpanded ? "⌃" : "⌄"}</button>
               </div>
               {detailsExpanded && (

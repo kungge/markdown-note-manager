@@ -350,6 +350,45 @@ button { color: inherit; }
   background: var(--green-soft);
 }
 .document-actions .details-toggle { width: 30px; padding-inline: 0; border-color: transparent; background: transparent; }
+.export-menu { position: relative; }
+.export-menu > button:disabled { cursor: wait; opacity: 0.68; }
+.export-popover {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  z-index: 20;
+  display: grid;
+  width: 256px;
+  padding: 6px;
+  border: 1px solid var(--line);
+  border-radius: 11px;
+  background: var(--panel);
+  box-shadow: 0 16px 44px rgba(19, 36, 27, 0.18);
+}
+.document-actions .export-popover button {
+  display: grid;
+  grid-template-columns: 48px minmax(0, 1fr);
+  gap: 10px;
+  width: 100%;
+  min-height: 58px;
+  padding: 8px;
+  border-color: transparent;
+  background: transparent;
+  text-align: left;
+}
+.document-actions .export-popover button:hover { border-color: transparent; background: var(--panel-soft); }
+.export-popover button > span:last-child { display: flex; flex-direction: column; gap: 2px; }
+.export-popover strong { color: var(--ink); font-size: 13px; }
+.export-popover small { color: var(--muted); font-size: 11px; }
+.export-format {
+  display: grid;
+  place-items: center;
+  height: 34px;
+  border-radius: 7px;
+  color: var(--green);
+  background: var(--green-soft);
+  font: 720 10px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+}
 .document-header .document-meta {
   grid-column: 1 / -1;
   padding-top: 7px;
@@ -534,7 +573,8 @@ button { color: inherit; }
 @media (max-width: 1180px) {
   .document-outline { flex-basis: 210px; width: 210px; }
   .back-to-top { right: 228px; }
-  .document-actions button span { display: none; }
+  .document-actions > button span,
+  .document-actions > .export-menu > button span { display: none; }
 }
 
 @media (max-width: 900px) {
@@ -547,6 +587,7 @@ button { color: inherit; }
   .document-header { grid-template-columns: minmax(0, 1fr) auto; gap: 8px; min-height: 62px; }
   .document-actions { gap: 2px; }
   .document-actions button { width: 29px; padding-inline: 0; border-color: transparent; background: transparent; }
+  .document-actions .export-popover button { width: 100%; padding: 8px; }
   .document-actions button:nth-child(3) { display: none; }
   .breadcrumbs { max-width: 50vw; }
   .markdown-body { width: calc(100% - 32px); padding-top: 28px; font-size: 16px; }

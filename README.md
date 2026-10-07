@@ -12,6 +12,7 @@
 - 安全渲染 GFM、代码高亮、任务列表、Mermaid 和图片
 - 监听 VS Code 等外部工具产生的文件变化并刷新
 - 只读显示当前分支及工作区范围内的 Git 状态
+- 将当前文章导出为独立 HTML，或通过系统打印窗口保存为 PDF
 - 可通过环境变量隐藏敏感目录
 - 点目录（例如 `.git`、`.workbuddy`）默认不进入索引或界面
 - 后端仅监听 `127.0.0.1`
@@ -81,3 +82,5 @@ pnpm build
 - [软件需求分析](kun-doc/01-software-requirements-analysis.md)
 - [已确认产品决策](kun-doc/02-confirmed-product-decisions.md)
 - [阶段 0 实施说明](kun-doc/03-phase-0-readonly-validation.md)
+- [阶段 0 阅读体验增强](kun-doc/04-phase-0-reading-experience.md)
+- [阶段 0 离线导出](kun-doc/05-phase-0-offline-export.md)
