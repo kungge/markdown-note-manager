@@ -1,10 +1,15 @@
 import { EventEmitter } from "node:events";
 import { watch } from "node:fs";
-import "dotenv/config";
+import { fileURLToPath } from "node:url";
+import { config as loadEnv } from "dotenv";
 import { createApp } from "./app.js";
 import { loadConfig } from "./config.js";
 import { DocumentIndex } from "./index-store.js";
 import { isHiddenPath } from "./path-security.js";
+
+// pnpm --filter 会把脚本工作目录切到 apps/server，dotenv 默认只读取 cwd 下的 .env，
+// 导致项目根目录的 .env 不生效。这里显式从 monorepo 根目录加载。
+loadEnv({ path: fileURLToPath(new URL("../../../.env", import.meta.url)) });
 
 async function main(): Promise<void> {
   const config = await loadConfig();
