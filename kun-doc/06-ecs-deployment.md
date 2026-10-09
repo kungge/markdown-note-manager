@@ -4,11 +4,17 @@
 
 - 地域：中国大陆 ECS。
 - 使用者：仅笔记仓库所有者本人。
-- 公网入口：`https://139.196.212.191:35400/`。
+- 公网入口：`https://139.196.212.191:8001/`。
 - TLS：无域名阶段使用包含公网 IP SAN 的自签名证书，浏览器首次访问需要手动信任。
-- 认证：Nginx Basic Auth。Basic Auth 位于 TLS 内，不会以明文在网络上传输。
+- 认证：Nginx Basic Auth，用户名为 `notehub`。Basic Auth 位于 TLS 内，不会以明文在网络上传输。
 - 应用：Node.js 22，由 systemd 托管，仅监听 `127.0.0.1:43110`。
 - 笔记同步：本机创建无凭据快照后使用 rsync 上传，服务器不保存 NoteHub 远端凭据。
+
+## 端口选择记录
+
+部署时确认 ECS 本机防火墙处于关闭状态，Nginx 能正常监听 `35400`，但从公网连接该端口超时；对比测试表明已有的 `8000`、`8082` 以及空闲的 `8001` 网络链路正常。因此最终使用已放行且未占用的 `8001`，没有继续依赖未实际生效的 `35400-35436` 安全组范围。
+
+初始密码只保存在服务器的 bcrypt 哈希文件 `/etc/nginx/.htpasswd-notehub` 中，不写入 Git 仓库。交付后应使用下文命令改成个人密码。
 
 ## 目录结构
 
@@ -20,6 +26,7 @@
 /srv/notehub/                         # NoteHub 只读运行快照
 /etc/markdown-note-manager/notehub.env
 /etc/systemd/system/markdown-note-manager.service
+/etc/nginx/nginx.conf
 /etc/nginx/conf.d/notehub.conf
 /etc/nginx/ssl/notehub.crt
 /etc/nginx/ssl/notehub.key
@@ -30,9 +37,9 @@
 
 应用的 Git 状态接口需要工作树元数据。部署脚本不会直接复制本地 `.git`，而是：
 
-1. 从本地仓库建立仅包含当前提交的浅克隆。
-2. 删除浅克隆的 `origin`。
-3. 将当前本地工作区覆盖到浅克隆。
+1. 从本地 Git 仓库的 `HEAD` 导出 NoteHub 子目录，避免带入同仓库中的其他历史笔记目录。
+2. 在临时目录中创建一个没有 remote 的独立基线仓库。
+3. 将当前 NoteHub 工作区覆盖到基线仓库。
 4. 把这个无 remote、无 Token、无 SSH Key 的快照上传到 ECS。
 
 这样服务器可以展示分支、已修改文件和未跟踪文件，但无法访问远端仓库。
@@ -74,7 +81,7 @@ systemctl status nginx --no-pager
 tail -n 100 /var/log/nginx/error.log
 
 curl http://127.0.0.1:43110/api/health
-ss -lntp | grep -E '35400|43110'
+ss -lntp | grep -E '8001|43110'
 ```
 
 ## 修改访问密码
@@ -102,7 +109,8 @@ nginx -t && systemctl reload nginx
 
 ## 安全边界
 
-- 公网仅暴露 Nginx 的 35400；43110 仅回环监听。
+- 公网仅暴露 Nginx 的 8001；43110 仅回环监听。
+- 系统 Nginx 主配置不包含默认 80 端口站点，避免开放端口范围内出现未认证入口。
 - 自签名证书提供传输加密，但不提供公共 CA 身份担保。首次访问必须人工核对证书指纹。
 - NoteHub 包含私密内容，不能取消 Basic Auth，也不能将笔记目录交给 Nginx 直接静态托管。
 - `.aws`、`.agents`、`.codex`、`.codebuddy`、`.workbuddy` 等本机工具目录不进入服务器快照。

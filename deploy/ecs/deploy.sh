@@ -17,6 +17,8 @@ if [[ -n "${DEPLOY_IDENTITY_FILE:-}" ]]; then
 fi
 if [[ -n "${DEPLOY_CONTROL_PATH:-}" ]]; then
   SSH_ARGUMENTS+=(-S "$DEPLOY_CONTROL_PATH" -o ControlMaster=no)
+else
+  SSH_ARGUMENTS+=(-o ControlMaster=auto -o ControlPersist=60s -o ControlPath=/tmp/notehub-deploy-ssh-%C)
 fi
 
 RSYNC_SSH=(ssh "${SSH_ARGUMENTS[@]}")
@@ -58,11 +60,34 @@ cp -R "$PROJECT_ROOT/apps/web/dist" "$APP_STAGE/apps/web/"
 
 echo "Creating a credential-free NoteHub snapshot..."
 rm -rf -- "$NOTE_STAGE"
-git clone --quiet --depth 1 --no-tags "file://$NOTEHUB_SOURCE" "$NOTE_STAGE"
-git -C "$NOTE_STAGE" remote remove origin
+mkdir -p "$NOTE_STAGE"
+SOURCE_REPOSITORY=$(git -C "$NOTEHUB_SOURCE" rev-parse --show-toplevel)
+SOURCE_BRANCH=$(git -C "$NOTEHUB_SOURCE" branch --show-current)
+SOURCE_RELATIVE=${NOTEHUB_SOURCE#"$SOURCE_REPOSITORY"/}
+if [[ "$NOTEHUB_SOURCE" == "$SOURCE_REPOSITORY" ]]; then
+  git -C "$SOURCE_REPOSITORY" archive HEAD | tar -x -C "$NOTE_STAGE"
+else
+  git -C "$SOURCE_REPOSITORY" archive "HEAD:$SOURCE_RELATIVE" | tar -x -C "$NOTE_STAGE"
+fi
+rm -rf -- \
+  "$NOTE_STAGE/.aws" \
+  "$NOTE_STAGE/.agents" \
+  "$NOTE_STAGE/.codex" \
+  "$NOTE_STAGE/.codebuddy" \
+  "$NOTE_STAGE/.workbuddy" \
+  "$NOTE_STAGE/node_modules"
+find "$NOTE_STAGE" -type f -name '.DS_Store' -delete
+git -C "$NOTE_STAGE" init --quiet --initial-branch="${SOURCE_BRANCH:-snapshot}"
+git -C "$NOTE_STAGE" config user.name "NoteHub Deployment"
+git -C "$NOTE_STAGE" config user.email "notehub-deployment@localhost"
+git -C "$NOTE_STAGE" config gc.auto 0
+git -C "$NOTE_STAGE" config maintenance.auto false
+git -C "$NOTE_STAGE" add -A
+git -C "$NOTE_STAGE" commit --quiet -m "Snapshot baseline"
+git -C "$NOTE_STAGE" gc --quiet --prune=now
 rsync -a --delete \
   --exclude='/.git/' \
-  --exclude='/.DS_Store' \
+  --exclude='.DS_Store' \
   --exclude='/.aws/' \
   --exclude='/.agents/' \
   --exclude='/.codex/' \
@@ -88,6 +113,16 @@ ssh_remote "set -eu; \
   systemctl restart markdown-note-manager"
 
 echo "Verifying service..."
-ssh_remote "set -eu; systemctl is-active --quiet markdown-note-manager; curl --fail --silent http://127.0.0.1:43110/api/health"
+ssh_remote 'set -eu
+  systemctl is-active --quiet markdown-note-manager
+  attempt=0
+  until curl --fail --silent http://127.0.0.1:43110/api/health; do
+    attempt=$((attempt + 1))
+    if [ "$attempt" -ge 30 ]; then
+      journalctl -u markdown-note-manager -n 50 --no-pager
+      exit 1
+    fi
+    sleep 1
+  done'
 echo
 echo "Deployment completed: $REMOTE_RELEASE"
