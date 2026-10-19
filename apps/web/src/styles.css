@@ -67,6 +67,23 @@ button { color: inherit; }
 .brand-copy strong { font-size: 14px; }
 .brand-copy span { color: var(--muted); font-size: 11px; }
 
+.workspace-picker {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 5px;
+  min-height: 32px;
+  padding: 5px 9px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--muted);
+  background: var(--panel-soft);
+  font-size: 12px;
+  cursor: pointer;
+}
+.workspace-picker:hover { border-color: #8bb69f; color: var(--green); background: var(--green-soft); }
+.workspace-picker:disabled { cursor: wait; opacity: 0.65; }
+
 .search-box {
   display: flex;
   align-items: center;
@@ -224,6 +241,31 @@ button { color: inherit; }
   text-align: center;
 }
 .empty-document div { font-size: 44px; color: #9eb1a5; }
+.workspace-setup {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 32px;
+  color: var(--muted);
+  text-align: center;
+}
+.workspace-setup-icon { font-size: 52px; filter: saturate(0.72); }
+.workspace-setup h1 { margin: 14px 0 8px; color: var(--ink); font-size: 24px; }
+.workspace-setup p { max-width: 520px; margin: 0 0 20px; line-height: 1.7; }
+.workspace-setup > button {
+  min-height: 42px;
+  padding: 8px 18px;
+  border: 0;
+  border-radius: 9px;
+  color: white;
+  background: var(--green);
+  font-weight: 680;
+  cursor: pointer;
+}
+.workspace-setup > button:disabled { cursor: wait; opacity: 0.68; }
+.workspace-setup small { margin-top: 12px; }
 .spinner { width: 32px; height: 32px; margin: auto; border: 3px solid var(--line); border-top-color: var(--green); border-radius: 50%; animation: spin 700ms linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
 .error-banner { display: flex; justify-content: space-between; padding: 10px 16px; color: #922; background: #fff0f0; }
@@ -232,6 +274,8 @@ button { color: inherit; }
 @media (max-width: 760px) {
   .app-shell { grid-template-columns: min(82vw, 300px) minmax(0, 1fr); }
   .brand-copy, .git-pill { display: none; }
+  .workspace-picker { width: 34px; padding-inline: 0; justify-content: center; font-size: 0; }
+  .workspace-picker span { font-size: 14px; }
   .search-box { width: auto; flex: 1; }
   .sidebar { position: relative; z-index: 4; box-shadow: var(--shadow); }
   .sidebar-collapsed { grid-template-columns: 0 minmax(0, 1fr); }

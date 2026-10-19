@@ -1,11 +1,7 @@
-import { EventEmitter } from "node:events";
-import { watch } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { config as loadEnv } from "dotenv";
 import { createApp } from "./app.js";
 import { loadConfig } from "./config.js";
-import { DocumentIndex } from "./index-store.js";
-import { isHiddenPath } from "./path-security.js";
 
 // pnpm --filter 会把脚本工作目录切到 apps/server，dotenv 默认只读取 cwd 下的 .env，
 // 导致项目根目录的 .env 不生效。这里显式从 monorepo 根目录加载。
@@ -13,40 +9,15 @@ loadEnv({ path: fileURLToPath(new URL("../../../.env", import.meta.url)) });
 
 async function main(): Promise<void> {
   const config = await loadConfig();
-  const index = new DocumentIndex(config.workspaceRoot, config.hiddenPaths);
-  await index.rebuild();
+  const { app, workspace } = await createApp(config);
 
-  const events = new EventEmitter();
-  const { app } = await createApp(config, { index, events });
-  let rebuildTimer: NodeJS.Timeout | undefined;
-  const watcher = watch(config.workspaceRoot, { recursive: true }, (_eventType, fileName) => {
-    const portableName = fileName?.toString().replaceAll("\\", "/") ?? "";
-    if (!portableName.toLocaleLowerCase().endsWith(".md")) return;
-    if (isHiddenPath(portableName, config.hiddenPaths)) return;
-    if (portableName.split("/").some((segment) => segment === "node_modules")) return;
-    clearTimeout(rebuildTimer);
-    rebuildTimer = setTimeout(async () => {
-      try {
-        await index.rebuild();
-        events.emit("workspace-change", JSON.stringify({ changedAt: new Date().toISOString() }));
-      } catch (error) {
-        app.log.error(error, "Failed to rebuild the workspace index.");
-      }
-    }, 350);
-  });
-  watcher.on("error", (error) => app.log.error(error, "Workspace file watcher failed."));
-
-  const close = async () => {
-    clearTimeout(rebuildTimer);
-    watcher.close();
-    await app.close();
-  };
+  const close = async () => app.close();
   process.on("SIGINT", close);
   process.on("SIGTERM", close);
 
   await app.listen({ host: config.host, port: config.port });
   app.log.info(
-    { workspace: config.workspaceRoot, documents: index.list().length },
+    { workspace: workspace.snapshot().root, documents: workspace.snapshot().documentCount },
     "Markdown Note Manager is ready.",
   );
 }

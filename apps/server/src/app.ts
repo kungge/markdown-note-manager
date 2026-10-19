@@ -1,4 +1,3 @@
-import { EventEmitter } from "node:events";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -6,13 +5,17 @@ import fastifyStatic from "@fastify/static";
 import Fastify from "fastify";
 import mime from "mime-types";
 import type { AppConfig } from "./config.js";
+import {
+  DirectoryPickerUnavailableError,
+  selectWorkspaceDirectory,
+} from "./directory-picker.js";
 import { readGitStatus } from "./git-status.js";
-import { DocumentIndex } from "./index-store.js";
 import {
   normalizeRelativePath,
   resolveExistingWorkspacePath,
   resolveWorkspacePath,
 } from "./path-security.js";
+import { WorkspaceNotConfiguredError, WorkspaceRuntime } from "./workspace-runtime.js";
 
 const SUPPORTED_IMAGE_TYPES = new Set([
   "image/avif",
@@ -63,46 +66,75 @@ async function readLimitedResponse(response: Response): Promise<Buffer> {
 }
 
 export interface AppDependencies {
-  index: DocumentIndex;
-  events: EventEmitter;
+  workspace?: WorkspaceRuntime;
+  selectDirectory?: () => Promise<string | null>;
 }
 
 export async function createApp(config: AppConfig, dependencies?: AppDependencies) {
   const app = Fastify({ logger: true });
-  const index = dependencies?.index ?? new DocumentIndex(config.workspaceRoot, config.hiddenPaths);
-  const events = dependencies?.events ?? new EventEmitter();
+  const ownsWorkspace = !dependencies?.workspace;
+  const workspace = dependencies?.workspace ?? new WorkspaceRuntime(
+    config.workspaceRoot,
+    config.hiddenPaths,
+  );
+  const selectDirectory = dependencies?.selectDirectory ?? selectWorkspaceDirectory;
+  await workspace.initialize();
+
+  workspace.events.on("watcher-error", (error) => app.log.error(error, "Workspace file watcher failed."));
+  workspace.events.on("rebuild-error", (error) => app.log.error(error, "Failed to rebuild the workspace index."));
+  if (ownsWorkspace) app.addHook("onClose", async () => workspace.close());
 
   app.get("/api/health", async () => ({ status: "ok" }));
 
-  app.get("/api/workspace", async () => ({
-    name: path.basename(config.workspaceRoot),
-    documentCount: index.list().length,
-    readOnly: true,
-  }));
+  app.get("/api/workspace", async () => workspace.snapshot());
 
-  app.get("/api/documents", async () => ({ documents: index.list() }));
+  app.post("/api/workspace/select", async (request, reply) => {
+    if (request.headers["x-note-manager-request"] !== "workspace-ui") {
+      return reply.code(403).send({ message: "Workspace selection must be started from the application UI." });
+    }
+    try {
+      const selectedPath = await selectDirectory();
+      if (!selectedPath) return { selected: false, canceled: true, workspace: workspace.snapshot() };
+      const snapshot = await workspace.setWorkspace(selectedPath);
+      return { selected: true, canceled: false, workspace: snapshot };
+    } catch (error) {
+      const status = error instanceof DirectoryPickerUnavailableError ? 501 : 500;
+      return reply.code(status).send({
+        message: error instanceof Error ? error.message : "无法打开目录选择器。",
+      });
+    }
+  });
+
+  app.get("/api/documents", async () => ({
+    documents: workspace.snapshot().configured ? workspace.getIndex().list() : [],
+  }));
 
   app.get<{ Querystring: { path?: string } }>("/api/document", async (request, reply) => {
     try {
       const relativePath = normalizeRelativePath(request.query.path ?? "");
-      resolveWorkspacePath(config.workspaceRoot, relativePath, config.hiddenPaths);
-      const document = index.get(relativePath);
+      const workspaceRoot = workspace.getRoot();
+      resolveWorkspacePath(workspaceRoot, relativePath, config.hiddenPaths);
+      const document = workspace.getIndex().get(relativePath);
       if (!document) return reply.code(404).send({ message: "Document not found." });
       return document;
     } catch (error) {
-      return reply.code(400).send({ message: error instanceof Error ? error.message : "Invalid path." });
+      const status = error instanceof WorkspaceNotConfiguredError ? 409 : 400;
+      return reply.code(status).send({ message: error instanceof Error ? error.message : "Invalid path." });
     }
   });
 
   app.get<{ Querystring: { q?: string; scope?: string } }>("/api/search", async (request) => ({
-    results: index.search(request.query.q ?? "", request.query.scope ?? ""),
+    results: workspace.snapshot().configured
+      ? workspace.getIndex().search(request.query.q ?? "", request.query.scope ?? "")
+      : [],
   }));
 
   app.get<{ Querystring: { path?: string } }>("/api/asset", async (request, reply) => {
     try {
       const relativePath = normalizeRelativePath(request.query.path ?? "");
+      const workspaceRoot = workspace.getRoot();
       const absolutePath = await resolveExistingWorkspacePath(
-        config.workspaceRoot,
+        workspaceRoot,
         relativePath,
         config.hiddenPaths,
       );
@@ -120,8 +152,9 @@ export async function createApp(config: AppConfig, dependencies?: AppDependencie
   app.get<{ Querystring: { path?: string; url?: string } }>("/api/export-asset", async (request, reply) => {
     try {
       const relativePath = normalizeRelativePath(request.query.path ?? "");
-      resolveWorkspacePath(config.workspaceRoot, relativePath, config.hiddenPaths);
-      const document = index.get(relativePath);
+      const workspaceRoot = workspace.getRoot();
+      resolveWorkspacePath(workspaceRoot, relativePath, config.hiddenPaths);
+      const document = workspace.getIndex().get(relativePath);
       if (!document) return reply.code(404).send({ message: "Document not found." });
 
       const remoteUrl = referencedRemoteImage(document.content, request.query.url ?? "");
@@ -150,7 +183,12 @@ export async function createApp(config: AppConfig, dependencies?: AppDependencie
     }
   });
 
-  app.get("/api/git/status", async () => readGitStatus(config.workspaceRoot, config.hiddenPaths));
+  app.get("/api/git/status", async () => {
+    if (!workspace.snapshot().configured) {
+      return { available: false, branch: null, files: [], message: "请先选择工作区。" };
+    }
+    return readGitStatus(workspace.getRoot(), config.hiddenPaths);
+  });
 
   app.get("/api/events", async (request, reply) => {
     reply.hijack();
@@ -164,8 +202,8 @@ export async function createApp(config: AppConfig, dependencies?: AppDependencie
     const onChange = (payload: string) => {
       reply.raw.write(`event: workspace-change\ndata: ${payload}\n\n`);
     };
-    events.on("workspace-change", onChange);
-    request.raw.on("close", () => events.off("workspace-change", onChange));
+    workspace.events.on("workspace-change", onChange);
+    request.raw.on("close", () => workspace.events.off("workspace-change", onChange));
   });
 
   const currentDirectory = path.dirname(fileURLToPath(import.meta.url));
@@ -176,5 +214,5 @@ export async function createApp(config: AppConfig, dependencies?: AppDependencie
     return reply.sendFile("index.html");
   });
 
-  return { app, index, events };
+  return { app, workspace };
 }

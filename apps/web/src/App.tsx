@@ -6,7 +6,7 @@ import {
   useState,
 } from "react";
 import { ArticleSearchBar } from "./ArticleSearchBar";
-import { getDocument, getDocuments, getGitStatus, getWorkspace, searchDocuments } from "./api";
+import { getDocument, getDocuments, getGitStatus, getWorkspace, searchDocuments, selectWorkspace } from "./api";
 import { DocumentOutline } from "./DocumentOutline";
 import { ExportMenu } from "./ExportMenu";
 import { FolderTree } from "./FolderTree";
@@ -21,6 +21,7 @@ type Theme = "light" | "dark";
 
 interface OpenDocumentOptions {
   updateUrl?: boolean;
+  replaceUrl?: boolean;
   heading?: string;
 }
 
@@ -46,7 +47,13 @@ async function copyText(value: string): Promise<void> {
 }
 
 export default function App() {
-  const [workspace, setWorkspace] = useState({ name: "NoteHub", documentCount: 0, readOnly: true });
+  const [workspace, setWorkspace] = useState({
+    configured: false,
+    root: null as string | null,
+    name: "尚未选择工作区",
+    documentCount: 0,
+    readOnly: true,
+  });
   const [documents, setDocuments] = useState<DocumentSummary[]>([]);
   const [activeDocument, setActiveDocument] = useState<DocumentDetail | null>(null);
   const [query, setQuery] = useState("");
@@ -63,6 +70,7 @@ export default function App() {
   const [activeHeading, setActiveHeading] = useState("");
   const [theme, setTheme] = useState<Theme>(initialTheme);
   const [toast, setToast] = useState("");
+  const [selectingWorkspace, setSelectingWorkspace] = useState(false);
 
   const documentScrollRef = useRef<HTMLDivElement>(null);
   const articleRootRef = useRef<HTMLDivElement>(null);
@@ -103,7 +111,9 @@ export default function App() {
       pendingHeadingRef.current = options.heading ?? "";
       setActiveDocument(nextDocument);
       if (options.updateUrl !== false) {
-        window.history.pushState({}, "", buildDocumentUrl(path, options.heading));
+        const url = buildDocumentUrl(path, options.heading);
+        if (options.replaceUrl) window.history.replaceState({}, "", url);
+        else window.history.pushState({}, "", url);
       }
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "无法打开笔记");
@@ -135,6 +145,28 @@ export default function App() {
       .catch((reason) => setError(reason instanceof Error ? reason.message : "工作区加载失败"))
       .finally(() => setLoading(false));
   }, [loadOverview, openDocument]);
+
+  const chooseWorkspace = useCallback(async () => {
+    setSelectingWorkspace(true);
+    setError("");
+    try {
+      const result = await selectWorkspace();
+      if (!result.selected) return;
+
+      setActiveDocument(null);
+      setQuery("");
+      setResults([]);
+      const items = await loadOverview();
+      const first = items[0];
+      if (first) await openDocument(first.path, { replaceUrl: true });
+      else window.history.replaceState({}, "", window.location.pathname);
+      showToast(`已切换到“${result.workspace.name}”`);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "无法选择工作区");
+    } finally {
+      setSelectingWorkspace(false);
+    }
+  }, [loadOverview, openDocument, showToast]);
 
   useEffect(() => {
     const onPopState = () => {
@@ -179,10 +211,23 @@ export default function App() {
   useEffect(() => {
     const source = new EventSource("/api/events");
     let refreshTimer = 0;
-    source.addEventListener("workspace-change", () => {
+    source.addEventListener("workspace-change", (event) => {
       window.clearTimeout(refreshTimer);
       refreshTimer = window.setTimeout(async () => {
         const items = await loadOverview();
+        let kind = "files-changed";
+        try {
+          kind = (JSON.parse((event as MessageEvent<string>).data) as { kind?: string }).kind ?? kind;
+        } catch {
+          // Older event payloads did not include a change kind.
+        }
+        if (kind === "workspace-selected") {
+          setActiveDocument(null);
+          const first = items[0];
+          if (first) await openDocument(first.path, { replaceUrl: true });
+          else window.history.replaceState({}, "", window.location.pathname);
+          return;
+        }
         if (activeDocument && items.some((item) => item.path === activeDocument.path)) {
           await openDocument(activeDocument.path, { updateUrl: false });
         }
@@ -263,7 +308,10 @@ export default function App() {
       <header className="topbar">
         <button className="icon-button" onClick={() => setSidebarOpen((value) => !value)} aria-label="切换侧栏">☰</button>
         <div className="brand-mark">M</div>
-        <div className="brand-copy"><strong>{workspace.name}</strong><span>{workspace.documentCount} 篇笔记 · 只读验证版</span></div>
+        <div className="brand-copy" title={workspace.root ?? undefined}><strong>{workspace.name}</strong><span>{workspace.documentCount} 篇笔记 · 只读验证版</span></div>
+        <button className="workspace-picker" onClick={() => void chooseWorkspace()} disabled={selectingWorkspace} title={workspace.configured ? "更换工作区" : "选择工作区"}>
+          <span>⌘</span>{selectingWorkspace ? "选择中…" : workspace.configured ? "更换工作区" : "选择工作区"}
+        </button>
         <label className="search-box">
           <span>⌕</span>
           <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索全部笔记…" aria-label="搜索笔记" />
@@ -293,7 +341,17 @@ export default function App() {
       <main className="document-panel">
         <div className="reading-progress" aria-hidden="true"><span style={{ width: `${readingProgress}%` }} /></div>
         {error && <div className="error-banner">{error}<button onClick={() => setError("")}>×</button></div>}
-        {activeDocument ? (
+        {!workspace.configured ? (
+          <div className="workspace-setup">
+            <div className="workspace-setup-icon">📂</div>
+            <h1>选择 Markdown 工作区</h1>
+            <p>选择一个本地目录后，应用会以只读方式扫描其中的 Markdown 文件。</p>
+            <button onClick={() => void chooseWorkspace()} disabled={selectingWorkspace}>
+              {selectingWorkspace ? "正在打开目录选择器…" : "选择本地目录"}
+            </button>
+            <small>应用不会移动、修改或上传目录中的文件。</small>
+          </div>
+        ) : activeDocument ? (
           <>
             <header className={`document-header ${detailsExpanded ? "expanded" : ""}`}>
               <div className="document-title-block">
@@ -341,7 +399,7 @@ export default function App() {
             {readingProgress > 8 && <button className="back-to-top" onClick={() => documentScrollRef.current?.scrollTo({ top: 0, behavior: "smooth" })} aria-label="返回文章顶部" title="返回顶部">↑</button>}
           </>
         ) : (
-          <div className="empty-document"><div>◇</div><p>选择一篇笔记开始阅读</p></div>
+          <div className="empty-document"><div>◇</div><p>当前工作区没有 Markdown 笔记</p></div>
         )}
       </main>
       {toast && <div className="toast" role="status">✓ {toast}</div>}

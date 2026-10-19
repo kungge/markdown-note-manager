@@ -10,11 +10,35 @@ async function getJson<T>(url: string): Promise<T> {
 }
 
 export async function getWorkspace(): Promise<{
+  configured: boolean;
+  root: string | null;
   name: string;
   documentCount: number;
   readOnly: boolean;
 }> {
   return getJson("/api/workspace");
+}
+
+export async function selectWorkspace(): Promise<{
+  selected: boolean;
+  canceled: boolean;
+  workspace: {
+    configured: boolean;
+    root: string | null;
+    name: string;
+    documentCount: number;
+    readOnly: boolean;
+  };
+}> {
+  const response = await fetch("/api/workspace/select", {
+    method: "POST",
+    headers: { "x-note-manager-request": "workspace-ui" },
+  });
+  if (!response.ok) {
+    const payload = (await response.json().catch(() => null)) as { message?: string } | null;
+    throw new Error(payload?.message ?? `Request failed: ${response.status}`);
+  }
+  return response.json();
 }
 
 export async function getDocuments(): Promise<DocumentSummary[]> {

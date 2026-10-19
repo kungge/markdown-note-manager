@@ -2,7 +2,7 @@ import path from "node:path";
 import { stat } from "node:fs/promises";
 
 export interface AppConfig {
-  workspaceRoot: string;
+  workspaceRoot: string | null;
   host: string;
   port: number;
   hiddenPaths: string[];
@@ -17,16 +17,13 @@ function parseHiddenPaths(value: string | undefined): string[] {
 
 export async function loadConfig(): Promise<AppConfig> {
   const rawWorkspace = process.env.NOTE_MANAGER_WORKSPACE;
-  if (!rawWorkspace) {
-    throw new Error(
-      "NOTE_MANAGER_WORKSPACE is required. Set it to the absolute path of your NoteHub directory.",
-    );
-  }
-
-  const workspaceRoot = path.resolve(rawWorkspace);
-  const info = await stat(workspaceRoot).catch(() => null);
-  if (!info?.isDirectory()) {
-    throw new Error(`Workspace does not exist or is not a directory: ${workspaceRoot}`);
+  let workspaceRoot: string | null = null;
+  if (rawWorkspace) {
+    workspaceRoot = path.resolve(rawWorkspace);
+    const info = await stat(workspaceRoot).catch(() => null);
+    if (!info?.isDirectory()) {
+      throw new Error(`Workspace does not exist or is not a directory: ${workspaceRoot}`);
+    }
   }
 
   const parsedPort = Number.parseInt(process.env.NOTE_MANAGER_PORT ?? "43110", 10);
