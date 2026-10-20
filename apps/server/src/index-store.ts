@@ -1,5 +1,6 @@
 import { readdir, readFile, stat } from "node:fs/promises";
 import path from "node:path";
+import { WorkspaceIgnoreRules } from "./ignore-rules.js";
 import { isHiddenPath, toPortablePath } from "./path-security.js";
 import { parseMarkdown } from "./markdown.js";
 import type {
@@ -20,6 +21,14 @@ const DEFAULT_IGNORED_DIRECTORIES = new Set([
   "coverage",
 ]);
 
+function hasIgnoredDirectory(relativePath: string, isDirectory: boolean): boolean {
+  const segments = toPortablePath(relativePath).split("/").filter(Boolean);
+  const directories = isDirectory ? segments : segments.slice(0, -1);
+  return directories.some((segment) =>
+    segment.startsWith(".") || DEFAULT_IGNORED_DIRECTORIES.has(segment),
+  );
+}
+
 const MAX_REPORTED_ISSUES = 100;
 
 export function createIdleScanStatus(): ScanStatus {
@@ -32,6 +41,8 @@ export function createIdleScanStatus(): ScanStatus {
     errorEntries: 0,
     skippedByReason: {
       "configured-hidden": 0,
+      "configured-ignore": 0,
+      "gitignore": 0,
       "dot-directory": 0,
       "default-ignored": 0,
       "symbolic-link": 0,
@@ -82,14 +93,22 @@ function createSnippet(body: string, query: string): string {
 
 export class DocumentIndex {
   private readonly documents = new Map<string, IndexedDocument>();
+  private ignoreRules: WorkspaceIgnoreRules;
 
   constructor(
     private readonly workspaceRoot: string,
     private readonly hiddenPaths: string[],
-  ) {}
+    private readonly configuredIgnorePatterns: string[] = [],
+  ) {
+    this.ignoreRules = new WorkspaceIgnoreRules(workspaceRoot, configuredIgnorePatterns);
+  }
 
   async rebuild(onProgress?: (status: ScanStatus) => void): Promise<ScanStatus> {
     const nextDocuments = new Map<string, IndexedDocument>();
+    const nextIgnoreRules = new WorkspaceIgnoreRules(
+      this.workspaceRoot,
+      this.configuredIgnorePatterns,
+    );
     const report: ScanStatus = {
       ...createIdleScanStatus(),
       status: "scanning",
@@ -116,6 +135,15 @@ export class DocumentIndex {
     publish();
 
     const visit = async (directory: string): Promise<void> => {
+      try {
+        await nextIgnoreRules.loadGitIgnore(directory);
+      } catch (error) {
+        const relativeDirectory = toPortablePath(path.relative(this.workspaceRoot, directory));
+        const gitignorePath = relativeDirectory ? `${relativeDirectory}/.gitignore` : ".gitignore";
+        recordError(gitignorePath, error);
+        publish();
+      }
+
       let entries;
       try {
         entries = await readdir(directory, { withFileTypes: true });
@@ -138,14 +166,16 @@ export class DocumentIndex {
           }
 
           if (entry.isDirectory()) {
-            if (entry.name.startsWith(".")) {
+            if (isHiddenPath(relativePath, this.hiddenPaths)) {
+              recordSkip("configured-hidden");
+            } else if (entry.name.startsWith(".")) {
               recordSkip("dot-directory");
             } else if (DEFAULT_IGNORED_DIRECTORIES.has(entry.name)) {
               recordSkip("default-ignored");
-            } else if (isHiddenPath(relativePath, this.hiddenPaths)) {
-              recordSkip("configured-hidden");
             } else {
-              await visit(absolutePath);
+              const ignored = nextIgnoreRules.match(relativePath, true);
+              if (ignored.ignored && ignored.reason) recordSkip(ignored.reason);
+              else await visit(absolutePath);
             }
             publish();
             return;
@@ -153,21 +183,26 @@ export class DocumentIndex {
 
           if (isHiddenPath(relativePath, this.hiddenPaths)) {
             recordSkip("configured-hidden");
-          } else if (!entry.isFile() || !entry.name.toLocaleLowerCase().endsWith(".md")) {
-            recordSkip("non-markdown");
           } else {
-            try {
-              const [content, info] = await Promise.all([
-                readFile(absolutePath, "utf8"),
-                stat(absolutePath),
-              ]);
-              nextDocuments.set(
-                relativePath,
-                parseMarkdown(relativePath, content, info.size, info.mtime),
-              );
-              report.indexedFiles += 1;
-            } catch (error) {
-              recordError(relativePath, error);
+            const ignored = nextIgnoreRules.match(relativePath, false);
+            if (ignored.ignored && ignored.reason) {
+              recordSkip(ignored.reason);
+            } else if (!entry.isFile() || !entry.name.toLocaleLowerCase().endsWith(".md")) {
+              recordSkip("non-markdown");
+            } else {
+              try {
+                const [content, info] = await Promise.all([
+                  readFile(absolutePath, "utf8"),
+                  stat(absolutePath),
+                ]);
+                nextDocuments.set(
+                  relativePath,
+                  parseMarkdown(relativePath, content, info.size, info.mtime),
+                );
+                report.indexedFiles += 1;
+              } catch (error) {
+                recordError(relativePath, error);
+              }
             }
           }
           publish();
@@ -178,11 +213,18 @@ export class DocumentIndex {
     await visit(this.workspaceRoot);
     this.documents.clear();
     for (const [key, value] of nextDocuments) this.documents.set(key, value);
+    this.ignoreRules = nextIgnoreRules;
     report.status = "completed";
     report.currentPath = null;
     report.finishedAt = new Date().toISOString();
     publish();
     return cloneScanStatus(report);
+  }
+
+  isIgnored(relativePath: string, isDirectory: boolean): boolean {
+    if (isHiddenPath(relativePath, this.hiddenPaths)) return true;
+    if (hasIgnoredDirectory(relativePath, isDirectory)) return true;
+    return this.ignoreRules.match(relativePath, isDirectory).ignored;
   }
 
   list(): DocumentSummary[] {

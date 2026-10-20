@@ -3,6 +3,8 @@ import type { ScanSkipReason, ScanStatus } from "./types";
 
 const REASON_LABELS: Record<ScanSkipReason, string> = {
   "configured-hidden": "配置的隐藏路径",
+  "configured-ignore": "自定义忽略规则",
+  "gitignore": ".gitignore 规则",
   "dot-directory": "点目录",
   "default-ignored": "默认忽略目录",
   "symbolic-link": "符号链接",

@@ -4,7 +4,7 @@
 type: project
 status: implemented
 created: 2026-10-07
-updated: 2026-10-07
+updated: 2026-10-20
 project: markdown-note-manager
 milestone: phase-0-readonly
 ---
@@ -23,6 +23,7 @@ milestone: phase-0-readonly
 - 监听外部文件变化并通知 Web UI 刷新。
 - 显示分支及限定在工作区内的 Git 文件状态。
 - 通过相对路径配置隐藏敏感目录。
+- 默认遵循工作区内的 `.gitignore`，并支持应用专用的文件、目录和通配忽略规则。
 - 点目录默认不进入目录、搜索、预览或 Git 状态视图。
 - 生产构建由本地服务托管，不需要额外 Web 服务器。
 

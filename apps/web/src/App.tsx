@@ -70,6 +70,8 @@ export default function App() {
       errorEntries: 0,
       skippedByReason: {
         "configured-hidden": 0,
+        "configured-ignore": 0,
+        "gitignore": 0,
         "dot-directory": 0,
         "default-ignored": 0,
         "symbolic-link": 0,

@@ -16,9 +16,9 @@ async function testApp(markdown: string) {
   const workspaceRoot = await mkdtemp(path.join(tmpdir(), "note-manager-export-"));
   temporaryDirectories.push(workspaceRoot);
   await writeFile(path.join(workspaceRoot, "note.md"), markdown);
-  const workspace = new WorkspaceRuntime(workspaceRoot, [], false);
+  const workspace = new WorkspaceRuntime(workspaceRoot, [], [], false);
   const created = await createApp(
-    { workspaceRoot, hiddenPaths: [], host: "127.0.0.1", port: 0 },
+    { workspaceRoot, hiddenPaths: [], ignorePatterns: [], host: "127.0.0.1", port: 0 },
     { workspace },
   );
   await created.ready;
@@ -57,10 +57,10 @@ describe("workspace selection endpoint", () => {
     await mkdir(path.join(selectedRoot, "notes"));
     await writeFile(path.join(selectedRoot, "notes", "welcome.md"), "# 新工作区\n正文");
 
-    const workspace = new WorkspaceRuntime(null, [], false);
+    const workspace = new WorkspaceRuntime(null, [], [], false);
     let pickerResult: string | null = null;
     const { app, ready } = await createApp(
-      { workspaceRoot: null, hiddenPaths: [], host: "127.0.0.1", port: 0 },
+      { workspaceRoot: null, hiddenPaths: [], ignorePatterns: [], host: "127.0.0.1", port: 0 },
       { workspace, selectDirectory: async () => pickerResult },
     );
     await ready;

@@ -76,6 +76,7 @@ export async function createApp(config: AppConfig, dependencies?: AppDependencie
   const workspace = dependencies?.workspace ?? new WorkspaceRuntime(
     config.workspaceRoot,
     config.hiddenPaths,
+    config.ignorePatterns,
   );
   const selectDirectory = dependencies?.selectDirectory ?? selectWorkspaceDirectory;
   const ready = workspace.initialize();

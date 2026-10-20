@@ -36,6 +36,8 @@ export type ScanStatusKind = "idle" | "scanning" | "completed" | "failed";
 
 export type ScanSkipReason =
   | "configured-hidden"
+  | "configured-ignore"
+  | "gitignore"
   | "dot-directory"
   | "default-ignored"
   | "symbolic-link"

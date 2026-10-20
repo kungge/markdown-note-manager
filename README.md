@@ -9,6 +9,7 @@
 - 读取指定的本地 Markdown 工作区
 - 在页面中调用系统目录选择器选择或更换工作区
 - 实时显示扫描进度、索引数量、跳过原因和错误文件报告
+- 默认读取工作区内的 `.gitignore`，并支持额外的文件、目录和通配忽略规则
 - 按真实目录浏览笔记
 - 搜索标题、路径和正文，支持中文连续文本
 - 安全渲染 GFM、代码高亮、任务列表、Mermaid 和图片
@@ -55,6 +56,17 @@ $env:NOTE_MANAGER_WORKSPACE = "C:\Users\you\notes\NoteHub"
 pnpm dev
 ```
 
+扫描器默认遵循工作区根目录及子目录中的 `.gitignore`。还可以通过
+`NOTE_MANAGER_IGNORE_PATTERNS` 增加应用专用规则，多个规则使用逗号或换行分隔；语法与
+`.gitignore` 一致，支持目录、文件、`*`、`**` 和 `!` 反向包含：
+
+```bash
+NOTE_MANAGER_IGNORE_PATTERNS='archive/**,**/*.draft.md,!archive/keep.md' pnpm dev
+```
+
+忽略规则只控制扫描和索引，不是访问控制；敏感内容仍应使用
+`NOTE_MANAGER_HIDDEN_PATHS` 隐藏。
+
 ## 构建与运行
 
 ```bash
@@ -85,6 +97,7 @@ pnpm build
 
 ### 未发布
 
+- 功能：扫描器默认遵循工作区根目录和子目录中的 `.gitignore`，并支持通过 `NOTE_MANAGER_IGNORE_PATTERNS` 配置文件、目录、通配符和反向包含规则；扫描报告会区分规则来源。
 - 功能：增加扫描状态与问题报告；扫描过程实时展示当前路径和统计结果，单个文件读取失败不再中断整个工作区扫描。
 - 功能：增加工作区图形化选择；未配置环境变量时可直接启动应用，通过系统目录选择器选择或更换本地工作区。
 - 文档：在 README 中增加更新日志和维护约定，集中展示项目演进记录。

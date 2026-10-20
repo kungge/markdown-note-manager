@@ -6,12 +6,20 @@ export interface AppConfig {
   host: string;
   port: number;
   hiddenPaths: string[];
+  ignorePatterns: string[];
 }
 
 function parseHiddenPaths(value: string | undefined): string[] {
   return (value ?? "")
     .split(",")
     .map((item) => item.trim().replaceAll("\\", "/").replace(/^\/+|\/+$/g, ""))
+    .filter(Boolean);
+}
+
+export function parseIgnorePatterns(value: string | undefined): string[] {
+  return (value ?? "")
+    .split(/\r?\n|,/)
+    .map((item) => item.trim())
     .filter(Boolean);
 }
 
@@ -36,5 +44,6 @@ export async function loadConfig(): Promise<AppConfig> {
     host: process.env.NOTE_MANAGER_HOST ?? "127.0.0.1",
     port: parsedPort,
     hiddenPaths: parseHiddenPaths(process.env.NOTE_MANAGER_HIDDEN_PATHS),
+    ignorePatterns: parseIgnorePatterns(process.env.NOTE_MANAGER_IGNORE_PATTERNS),
   };
 }

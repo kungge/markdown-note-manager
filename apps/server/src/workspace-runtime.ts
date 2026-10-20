@@ -30,6 +30,7 @@ export class WorkspaceRuntime {
   constructor(
     private readonly initialRoot: string | null,
     private readonly hiddenPaths: string[],
+    private readonly ignorePatterns: string[],
     private readonly watchFiles = true,
   ) {}
 
@@ -81,7 +82,7 @@ export class WorkspaceRuntime {
       throw error;
     }
 
-    const nextIndex = new DocumentIndex(nextRoot, this.hiddenPaths);
+    const nextIndex = new DocumentIndex(nextRoot, this.hiddenPaths, this.ignorePatterns);
     let report: ScanStatus;
     try {
       report = await nextIndex.rebuild((status) => {
@@ -115,9 +116,10 @@ export class WorkspaceRuntime {
     const workspaceRoot = this.getRoot();
     this.watcher = watch(workspaceRoot, { recursive: true }, (_eventType, fileName) => {
       const portableName = fileName?.toString().replaceAll("\\", "/") ?? "";
-      if (!portableName.toLocaleLowerCase().endsWith(".md")) return;
       if (isHiddenPath(portableName, this.hiddenPaths)) return;
-      if (portableName.split("/").some((segment) => segment === "node_modules")) return;
+      const baseName = path.posix.basename(portableName);
+      if (baseName !== ".gitignore" && this.getIndex().isIgnored(portableName, false)) return;
+      if (baseName !== ".gitignore" && !portableName.toLocaleLowerCase().endsWith(".md")) return;
       clearTimeout(this.rebuildTimer);
       this.rebuildTimer = setTimeout(() => void this.rebuildAfterChange(), 350);
     });
