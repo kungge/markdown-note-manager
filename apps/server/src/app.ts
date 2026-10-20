@@ -78,11 +78,15 @@ export async function createApp(config: AppConfig, dependencies?: AppDependencie
     config.hiddenPaths,
   );
   const selectDirectory = dependencies?.selectDirectory ?? selectWorkspaceDirectory;
-  await workspace.initialize();
+  const ready = workspace.initialize();
+  void ready.catch((error) => app.log.error(error, "Initial workspace scan failed."));
 
   workspace.events.on("watcher-error", (error) => app.log.error(error, "Workspace file watcher failed."));
   workspace.events.on("rebuild-error", (error) => app.log.error(error, "Failed to rebuild the workspace index."));
-  if (ownsWorkspace) app.addHook("onClose", async () => workspace.close());
+  if (ownsWorkspace) app.addHook("onClose", async () => {
+    await ready.catch(() => undefined);
+    await workspace.close();
+  });
 
   app.get("/api/health", async () => ({ status: "ok" }));
 
@@ -91,6 +95,9 @@ export async function createApp(config: AppConfig, dependencies?: AppDependencie
   app.post("/api/workspace/select", async (request, reply) => {
     if (request.headers["x-note-manager-request"] !== "workspace-ui") {
       return reply.code(403).send({ message: "Workspace selection must be started from the application UI." });
+    }
+    if (workspace.isScanning()) {
+      return reply.code(409).send({ message: "工作区正在扫描，请等待当前扫描完成。" });
     }
     try {
       const selectedPath = await selectDirectory();
@@ -198,12 +205,20 @@ export async function createApp(config: AppConfig, dependencies?: AppDependencie
       Connection: "keep-alive",
     });
     reply.raw.write("event: ready\ndata: {}\n\n");
+    reply.raw.write(`event: scan-status\ndata: ${JSON.stringify(workspace.snapshot().scan)}\n\n`);
 
     const onChange = (payload: string) => {
       reply.raw.write(`event: workspace-change\ndata: ${payload}\n\n`);
     };
+    const onScanStatus = (payload: string) => {
+      reply.raw.write(`event: scan-status\ndata: ${payload}\n\n`);
+    };
     workspace.events.on("workspace-change", onChange);
-    request.raw.on("close", () => workspace.events.off("workspace-change", onChange));
+    workspace.events.on("scan-status", onScanStatus);
+    request.raw.on("close", () => {
+      workspace.events.off("workspace-change", onChange);
+      workspace.events.off("scan-status", onScanStatus);
+    });
   });
 
   const currentDirectory = path.dirname(fileURLToPath(import.meta.url));
@@ -214,5 +229,5 @@ export async function createApp(config: AppConfig, dependencies?: AppDependencie
     return reply.sendFile("index.html");
   });
 
-  return { app, workspace };
+  return { app, workspace, ready };
 }

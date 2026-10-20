@@ -37,3 +37,32 @@ export interface GitStatusResult {
   files: GitFileStatus[];
   message?: string;
 }
+
+export type ScanStatusKind = "idle" | "scanning" | "completed" | "failed";
+
+export type ScanSkipReason =
+  | "configured-hidden"
+  | "dot-directory"
+  | "default-ignored"
+  | "symbolic-link"
+  | "non-markdown";
+
+export interface ScanIssue {
+  path: string;
+  message: string;
+}
+
+export interface ScanStatus {
+  status: ScanStatusKind;
+  workspaceName: string | null;
+  scannedEntries: number;
+  indexedFiles: number;
+  skippedEntries: number;
+  errorEntries: number;
+  skippedByReason: Record<ScanSkipReason, number>;
+  issues: ScanIssue[];
+  truncatedIssues: number;
+  currentPath: string | null;
+  startedAt: string | null;
+  finishedAt: string | null;
+}

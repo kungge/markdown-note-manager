@@ -17,10 +17,12 @@ async function testApp(markdown: string) {
   temporaryDirectories.push(workspaceRoot);
   await writeFile(path.join(workspaceRoot, "note.md"), markdown);
   const workspace = new WorkspaceRuntime(workspaceRoot, [], false);
-  return createApp(
+  const created = await createApp(
     { workspaceRoot, hiddenPaths: [], host: "127.0.0.1", port: 0 },
     { workspace },
   );
+  await created.ready;
+  return created;
 }
 
 describe("export asset endpoint", () => {
@@ -57,10 +59,11 @@ describe("workspace selection endpoint", () => {
 
     const workspace = new WorkspaceRuntime(null, [], false);
     let pickerResult: string | null = null;
-    const { app } = await createApp(
+    const { app, ready } = await createApp(
       { workspaceRoot: null, hiddenPaths: [], host: "127.0.0.1", port: 0 },
       { workspace, selectDirectory: async () => pickerResult },
     );
+    await ready;
 
     const before = await app.inject({ method: "GET", url: "/api/workspace" });
     expect(before.json()).toMatchObject({ configured: false, documentCount: 0 });
@@ -84,7 +87,12 @@ describe("workspace selection endpoint", () => {
     expect(selected.statusCode).toBe(200);
     expect(selected.json()).toMatchObject({
       selected: true,
-      workspace: { configured: true, name: path.basename(selectedRoot), documentCount: 1 },
+      workspace: {
+        configured: true,
+        name: path.basename(selectedRoot),
+        documentCount: 1,
+        scan: { status: "completed", indexedFiles: 1 },
+      },
     });
 
     const documents = await app.inject({ method: "GET", url: "/api/documents" });

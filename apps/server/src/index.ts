@@ -9,7 +9,7 @@ loadEnv({ path: fileURLToPath(new URL("../../../.env", import.meta.url)) });
 
 async function main(): Promise<void> {
   const config = await loadConfig();
-  const { app, workspace } = await createApp(config);
+  const { app, workspace, ready } = await createApp(config);
 
   const close = async () => app.close();
   process.on("SIGINT", close);
@@ -20,6 +20,15 @@ async function main(): Promise<void> {
     { workspace: workspace.snapshot().root, documents: workspace.snapshot().documentCount },
     "Markdown Note Manager is ready.",
   );
+  void ready.then(() => {
+    const snapshot = workspace.snapshot();
+    if (snapshot.configured) {
+      app.log.info(
+        { workspace: snapshot.root, documents: snapshot.documentCount },
+        "Initial workspace scan completed.",
+      );
+    }
+  }).catch(() => undefined);
 }
 
 main().catch((error) => {

@@ -2,7 +2,13 @@ import { readdir, readFile, stat } from "node:fs/promises";
 import path from "node:path";
 import { isHiddenPath, toPortablePath } from "./path-security.js";
 import { parseMarkdown } from "./markdown.js";
-import type { DocumentSummary, IndexedDocument, SearchHit } from "./types.js";
+import type {
+  DocumentSummary,
+  IndexedDocument,
+  ScanSkipReason,
+  ScanStatus,
+  SearchHit,
+} from "./types.js";
 
 const DEFAULT_IGNORED_DIRECTORIES = new Set([
   ".git",
@@ -13,6 +19,39 @@ const DEFAULT_IGNORED_DIRECTORIES = new Set([
   "build",
   "coverage",
 ]);
+
+const MAX_REPORTED_ISSUES = 100;
+
+export function createIdleScanStatus(): ScanStatus {
+  return {
+    status: "idle",
+    workspaceName: null,
+    scannedEntries: 0,
+    indexedFiles: 0,
+    skippedEntries: 0,
+    errorEntries: 0,
+    skippedByReason: {
+      "configured-hidden": 0,
+      "dot-directory": 0,
+      "default-ignored": 0,
+      "symbolic-link": 0,
+      "non-markdown": 0,
+    },
+    issues: [],
+    truncatedIssues: 0,
+    currentPath: null,
+    startedAt: null,
+    finishedAt: null,
+  };
+}
+
+function cloneScanStatus(status: ScanStatus): ScanStatus {
+  return {
+    ...status,
+    skippedByReason: { ...status.skippedByReason },
+    issues: [...status.issues],
+  };
+}
 
 function summary(document: IndexedDocument): DocumentSummary {
   const { content: _content, body: _body, frontMatter: _frontMatter, ...rest } = document;
@@ -49,31 +88,89 @@ export class DocumentIndex {
     private readonly hiddenPaths: string[],
   ) {}
 
-  async rebuild(): Promise<void> {
+  async rebuild(onProgress?: (status: ScanStatus) => void): Promise<ScanStatus> {
     const nextDocuments = new Map<string, IndexedDocument>();
+    const report: ScanStatus = {
+      ...createIdleScanStatus(),
+      status: "scanning",
+      workspaceName: path.basename(this.workspaceRoot),
+      startedAt: new Date().toISOString(),
+    };
+
+    const publish = () => onProgress?.(cloneScanStatus(report));
+    const recordSkip = (reason: ScanSkipReason) => {
+      report.skippedEntries += 1;
+      report.skippedByReason[reason] += 1;
+    };
+    const recordError = (relativePath: string, error: unknown) => {
+      report.errorEntries += 1;
+      const rawMessage = error instanceof Error ? error.message : "Unknown scan error.";
+      const message = rawMessage.replaceAll(this.workspaceRoot, ".");
+      if (report.issues.length < MAX_REPORTED_ISSUES) {
+        report.issues.push({ path: relativePath || ".", message });
+      } else {
+        report.truncatedIssues += 1;
+      }
+    };
+
+    publish();
 
     const visit = async (directory: string): Promise<void> => {
-      const entries = await readdir(directory, { withFileTypes: true });
+      let entries;
+      try {
+        entries = await readdir(directory, { withFileTypes: true });
+      } catch (error) {
+        recordError(toPortablePath(path.relative(this.workspaceRoot, directory)) || ".", error);
+        publish();
+        return;
+      }
       await Promise.all(
         entries.map(async (entry) => {
-          if (entry.isSymbolicLink()) return;
           const absolutePath = path.join(directory, entry.name);
           const relativePath = toPortablePath(path.relative(this.workspaceRoot, absolutePath));
-          if (isHiddenPath(relativePath, this.hiddenPaths)) return;
+          report.scannedEntries += 1;
+          report.currentPath = relativePath;
 
-          if (entry.isDirectory()) {
-            if (!entry.name.startsWith(".") && !DEFAULT_IGNORED_DIRECTORIES.has(entry.name)) {
-              await visit(absolutePath);
-            }
+          if (entry.isSymbolicLink()) {
+            recordSkip("symbolic-link");
+            publish();
             return;
           }
 
-          if (!entry.isFile() || !entry.name.toLocaleLowerCase().endsWith(".md")) return;
-          const [content, info] = await Promise.all([readFile(absolutePath, "utf8"), stat(absolutePath)]);
-          nextDocuments.set(
-            relativePath,
-            parseMarkdown(relativePath, content, info.size, info.mtime),
-          );
+          if (entry.isDirectory()) {
+            if (entry.name.startsWith(".")) {
+              recordSkip("dot-directory");
+            } else if (DEFAULT_IGNORED_DIRECTORIES.has(entry.name)) {
+              recordSkip("default-ignored");
+            } else if (isHiddenPath(relativePath, this.hiddenPaths)) {
+              recordSkip("configured-hidden");
+            } else {
+              await visit(absolutePath);
+            }
+            publish();
+            return;
+          }
+
+          if (isHiddenPath(relativePath, this.hiddenPaths)) {
+            recordSkip("configured-hidden");
+          } else if (!entry.isFile() || !entry.name.toLocaleLowerCase().endsWith(".md")) {
+            recordSkip("non-markdown");
+          } else {
+            try {
+              const [content, info] = await Promise.all([
+                readFile(absolutePath, "utf8"),
+                stat(absolutePath),
+              ]);
+              nextDocuments.set(
+                relativePath,
+                parseMarkdown(relativePath, content, info.size, info.mtime),
+              );
+              report.indexedFiles += 1;
+            } catch (error) {
+              recordError(relativePath, error);
+            }
+          }
+          publish();
         }),
       );
     };
@@ -81,6 +178,11 @@ export class DocumentIndex {
     await visit(this.workspaceRoot);
     this.documents.clear();
     for (const [key, value] of nextDocuments) this.documents.set(key, value);
+    report.status = "completed";
+    report.currentPath = null;
+    report.finishedAt = new Date().toISOString();
+    publish();
+    return cloneScanStatus(report);
   }
 
   list(): DocumentSummary[] {

@@ -1,4 +1,10 @@
-import type { DocumentDetail, DocumentSummary, GitStatusResult, SearchHit } from "./types";
+import type {
+  DocumentDetail,
+  DocumentSummary,
+  GitStatusResult,
+  SearchHit,
+  WorkspaceInfo,
+} from "./types";
 
 async function getJson<T>(url: string): Promise<T> {
   const response = await fetch(url);
@@ -9,26 +15,14 @@ async function getJson<T>(url: string): Promise<T> {
   return response.json() as Promise<T>;
 }
 
-export async function getWorkspace(): Promise<{
-  configured: boolean;
-  root: string | null;
-  name: string;
-  documentCount: number;
-  readOnly: boolean;
-}> {
+export async function getWorkspace(): Promise<WorkspaceInfo> {
   return getJson("/api/workspace");
 }
 
 export async function selectWorkspace(): Promise<{
   selected: boolean;
   canceled: boolean;
-  workspace: {
-    configured: boolean;
-    root: string | null;
-    name: string;
-    documentCount: number;
-    readOnly: boolean;
-  };
+  workspace: WorkspaceInfo;
 }> {
   const response = await fetch("/api/workspace/select", {
     method: "POST",

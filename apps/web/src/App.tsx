@@ -13,8 +13,16 @@ import { FolderTree } from "./FolderTree";
 import { MarkdownPreview } from "./MarkdownPreview";
 import { formatRelativeTime } from "./path-utils";
 import { buildDocumentUrl, headingFromLocation } from "./reading-utils";
+import { ScanStatusPanel } from "./ScanStatusPanel";
 import { SourceView } from "./SourceView";
-import type { DocumentDetail, DocumentSummary, GitStatusResult, SearchHit } from "./types";
+import type {
+  DocumentDetail,
+  DocumentSummary,
+  GitStatusResult,
+  ScanStatus,
+  SearchHit,
+  WorkspaceInfo,
+} from "./types";
 import { useArticleSearch } from "./useArticleSearch";
 
 type Theme = "light" | "dark";
@@ -47,12 +55,32 @@ async function copyText(value: string): Promise<void> {
 }
 
 export default function App() {
-  const [workspace, setWorkspace] = useState({
+  const [workspace, setWorkspace] = useState<WorkspaceInfo>({
     configured: false,
     root: null as string | null,
     name: "尚未选择工作区",
     documentCount: 0,
     readOnly: true,
+    scan: {
+      status: "idle",
+      workspaceName: null,
+      scannedEntries: 0,
+      indexedFiles: 0,
+      skippedEntries: 0,
+      errorEntries: 0,
+      skippedByReason: {
+        "configured-hidden": 0,
+        "dot-directory": 0,
+        "default-ignored": 0,
+        "symbolic-link": 0,
+        "non-markdown": 0,
+      },
+      issues: [],
+      truncatedIssues: 0,
+      currentPath: null,
+      startedAt: null,
+      finishedAt: null,
+    },
   });
   const [documents, setDocuments] = useState<DocumentSummary[]>([]);
   const [activeDocument, setActiveDocument] = useState<DocumentDetail | null>(null);
@@ -211,6 +239,19 @@ export default function App() {
   useEffect(() => {
     const source = new EventSource("/api/events");
     let refreshTimer = 0;
+    source.addEventListener("scan-status", (event) => {
+      try {
+        const scan = JSON.parse((event as MessageEvent<string>).data) as ScanStatus;
+        setWorkspace((current) => ({ ...current, scan }));
+        if (scan.status === "completed") {
+          void loadOverview().catch((reason) => {
+            setError(reason instanceof Error ? reason.message : "扫描结果加载失败");
+          });
+        }
+      } catch {
+        // Ignore malformed event payloads and keep the latest valid scan state.
+      }
+    });
     source.addEventListener("workspace-change", (event) => {
       window.clearTimeout(refreshTimer);
       refreshTimer = window.setTimeout(async () => {
@@ -309,7 +350,7 @@ export default function App() {
         <button className="icon-button" onClick={() => setSidebarOpen((value) => !value)} aria-label="切换侧栏">☰</button>
         <div className="brand-mark">M</div>
         <div className="brand-copy" title={workspace.root ?? undefined}><strong>{workspace.name}</strong><span>{workspace.documentCount} 篇笔记 · 只读验证版</span></div>
-        <button className="workspace-picker" onClick={() => void chooseWorkspace()} disabled={selectingWorkspace} title={workspace.configured ? "更换工作区" : "选择工作区"}>
+        <button className="workspace-picker" onClick={() => void chooseWorkspace()} disabled={selectingWorkspace || workspace.scan.status === "scanning"} title={workspace.configured ? "更换工作区" : "选择工作区"}>
           <span>⌘</span>{selectingWorkspace ? "选择中…" : workspace.configured ? "更换工作区" : "选择工作区"}
         </button>
         <label className="search-box">
@@ -324,6 +365,7 @@ export default function App() {
       <aside className="sidebar">
         <div className="sidebar-heading"><span>文件</span><span className="count-badge">{documents.length}</span></div>
         <FolderTree documents={documents} activePath={activeDocument?.path ?? ""} onOpen={(path) => void openDocument(path)} />
+        <ScanStatusPanel scan={workspace.scan} />
       </aside>
 
       <section className={`result-panel ${query.trim() ? "visible" : ""}`}>
@@ -344,11 +386,13 @@ export default function App() {
         {!workspace.configured ? (
           <div className="workspace-setup">
             <div className="workspace-setup-icon">📂</div>
-            <h1>选择 Markdown 工作区</h1>
-            <p>选择一个本地目录后，应用会以只读方式扫描其中的 Markdown 文件。</p>
-            <button onClick={() => void chooseWorkspace()} disabled={selectingWorkspace}>
-              {selectingWorkspace ? "正在打开目录选择器…" : "选择本地目录"}
-            </button>
+            <h1>{workspace.scan.status === "scanning" ? `正在扫描“${workspace.scan.workspaceName ?? "工作区"}”` : "选择 Markdown 工作区"}</h1>
+            <p>{workspace.scan.status === "scanning" ? `已检查 ${workspace.scan.scannedEntries} 项，发现 ${workspace.scan.indexedFiles} 篇 Markdown 笔记。` : "选择一个本地目录后，应用会以只读方式扫描其中的 Markdown 文件。"}</p>
+            {workspace.scan.status !== "scanning" && (
+              <button onClick={() => void chooseWorkspace()} disabled={selectingWorkspace}>
+                {selectingWorkspace ? "正在打开目录选择器…" : "选择本地目录"}
+              </button>
+            )}
             <small>应用不会移动、修改或上传目录中的文件。</small>
           </div>
         ) : activeDocument ? (

@@ -2,8 +2,9 @@ import { EventEmitter } from "node:events";
 import { watch, type FSWatcher } from "node:fs";
 import { stat } from "node:fs/promises";
 import path from "node:path";
-import { DocumentIndex } from "./index-store.js";
+import { createIdleScanStatus, DocumentIndex } from "./index-store.js";
 import { isHiddenPath } from "./path-security.js";
+import type { ScanStatus } from "./types.js";
 
 export interface WorkspaceSnapshot {
   configured: boolean;
@@ -11,6 +12,7 @@ export interface WorkspaceSnapshot {
   name: string;
   documentCount: number;
   readOnly: true;
+  scan: ScanStatus;
 }
 
 export class WorkspaceNotConfiguredError extends Error {}
@@ -21,6 +23,9 @@ export class WorkspaceRuntime {
   private index: DocumentIndex | null = null;
   private watcher: FSWatcher | null = null;
   private rebuildTimer: NodeJS.Timeout | undefined;
+  private scanStatus = createIdleScanStatus();
+  private lastScanEventAt = 0;
+  private initialized = false;
 
   constructor(
     private readonly initialRoot: string | null,
@@ -29,6 +34,8 @@ export class WorkspaceRuntime {
   ) {}
 
   async initialize(): Promise<void> {
+    if (this.initialized) return;
+    this.initialized = true;
     if (this.initialRoot) await this.setWorkspace(this.initialRoot, false);
   }
 
@@ -39,7 +46,12 @@ export class WorkspaceRuntime {
       name: this.root ? path.basename(this.root) : "尚未选择工作区",
       documentCount: this.index?.list().length ?? 0,
       readOnly: true,
+      scan: this.scanStatus,
     };
+  }
+
+  isScanning(): boolean {
+    return this.scanStatus.status === "scanning";
   }
 
   getRoot(): string {
@@ -54,18 +66,36 @@ export class WorkspaceRuntime {
 
   async setWorkspace(rawRoot: string, notify = true): Promise<WorkspaceSnapshot> {
     const nextRoot = path.resolve(rawRoot);
+    const workspaceName = path.basename(nextRoot);
+    this.updateScanStatus({
+      ...createIdleScanStatus(),
+      status: "scanning",
+      workspaceName,
+      startedAt: new Date().toISOString(),
+    }, true);
+
     const info = await stat(nextRoot).catch(() => null);
     if (!info?.isDirectory()) {
-      throw new Error(`Workspace does not exist or is not a directory: ${nextRoot}`);
+      const error = new Error(`Workspace does not exist or is not a directory: ${nextRoot}`);
+      this.markScanFailed(workspaceName, error);
+      throw error;
     }
 
     const nextIndex = new DocumentIndex(nextRoot, this.hiddenPaths);
-    await nextIndex.rebuild();
-
+    let report: ScanStatus;
+    try {
+      report = await nextIndex.rebuild((status) => {
+        if (status.status === "scanning") this.updateScanStatus(status);
+      });
+    } catch (error) {
+      this.markScanFailed(workspaceName, error);
+      throw error;
+    }
     this.stopWatcher();
     this.root = nextRoot;
     this.index = nextIndex;
     if (this.watchFiles) this.startWatcher();
+    this.updateScanStatus(report, true);
 
     const snapshot = this.snapshot();
     if (notify) {
@@ -95,8 +125,10 @@ export class WorkspaceRuntime {
   }
 
   private async rebuildAfterChange(): Promise<void> {
+    if (this.isScanning()) return;
     try {
-      await this.getIndex().rebuild();
+      const report = await this.getIndex().rebuild((status) => this.updateScanStatus(status));
+      this.updateScanStatus(report, true);
       this.events.emit("workspace-change", JSON.stringify({
         kind: "files-changed",
         changedAt: new Date().toISOString(),
@@ -111,5 +143,27 @@ export class WorkspaceRuntime {
     this.rebuildTimer = undefined;
     this.watcher?.close();
     this.watcher = null;
+  }
+
+  private updateScanStatus(status: ScanStatus, force = false): void {
+    this.scanStatus = status;
+    const now = Date.now();
+    if (force || status.status !== "scanning" || now - this.lastScanEventAt >= 100) {
+      this.lastScanEventAt = now;
+      this.events.emit("scan-status", JSON.stringify(status));
+    }
+  }
+
+  private markScanFailed(workspaceName: string, error: unknown): void {
+    const message = error instanceof Error ? error.message : "Workspace scan failed.";
+    this.updateScanStatus({
+      ...createIdleScanStatus(),
+      status: "failed",
+      workspaceName,
+      errorEntries: 1,
+      issues: [{ path: ".", message }],
+      startedAt: this.scanStatus.startedAt,
+      finishedAt: new Date().toISOString(),
+    }, true);
   }
 }
