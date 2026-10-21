@@ -15,7 +15,11 @@ import {
   resolveExistingWorkspacePath,
   resolveWorkspacePath,
 } from "./path-security.js";
-import { WorkspaceNotConfiguredError, WorkspaceRuntime } from "./workspace-runtime.js";
+import {
+  WorkspaceNotConfiguredError,
+  WorkspaceRuntime,
+  WorkspaceScanInProgressError,
+} from "./workspace-runtime.js";
 
 const SUPPORTED_IMAGE_TYPES = new Set([
   "image/avif",
@@ -109,6 +113,21 @@ export async function createApp(config: AppConfig, dependencies?: AppDependencie
       const status = error instanceof DirectoryPickerUnavailableError ? 501 : 500;
       return reply.code(status).send({
         message: error instanceof Error ? error.message : "无法打开目录选择器。",
+      });
+    }
+  });
+
+  app.post("/api/workspace/rebuild", async (request, reply) => {
+    if (request.headers["x-note-manager-request"] !== "workspace-ui") {
+      return reply.code(403).send({ message: "Index rebuild must be started from the application UI." });
+    }
+    try {
+      return await workspace.rebuildIndex();
+    } catch (error) {
+      const status = error instanceof WorkspaceNotConfiguredError ||
+        error instanceof WorkspaceScanInProgressError ? 409 : 500;
+      return reply.code(status).send({
+        message: error instanceof Error ? error.message : "无法重建工作区索引。",
       });
     }
   });

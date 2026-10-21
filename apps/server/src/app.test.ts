@@ -103,3 +103,82 @@ describe("workspace selection endpoint", () => {
     await app.close();
   });
 });
+
+describe("manual index rebuild endpoint", () => {
+  it("rebuilds the current workspace only for an explicit UI request", async () => {
+    const workspaceRoot = await mkdtemp(path.join(tmpdir(), "note-manager-rebuild-"));
+    temporaryDirectories.push(workspaceRoot);
+    await writeFile(path.join(workspaceRoot, "first.md"), "# 第一篇");
+
+    const workspace = new WorkspaceRuntime(workspaceRoot, [], [], false);
+    const { app, ready } = await createApp(
+      { workspaceRoot, hiddenPaths: [], ignorePatterns: [], host: "127.0.0.1", port: 0 },
+      { workspace },
+    );
+    await ready;
+    await writeFile(path.join(workspaceRoot, "second.md"), "# 第二篇");
+
+    const forbidden = await app.inject({ method: "POST", url: "/api/workspace/rebuild" });
+    expect(forbidden.statusCode).toBe(403);
+
+    const rebuilt = await app.inject({
+      method: "POST",
+      url: "/api/workspace/rebuild",
+      headers: { "x-note-manager-request": "workspace-ui" },
+    });
+    expect(rebuilt.statusCode).toBe(200);
+    expect(rebuilt.json()).toMatchObject({
+      documentCount: 2,
+      scan: { status: "completed", indexedFiles: 2 },
+    });
+
+    const documents = await app.inject({ method: "GET", url: "/api/documents" });
+    expect(documents.json().documents.map((document: { path: string }) => document.path)).toEqual([
+      "first.md",
+      "second.md",
+    ]);
+    await app.close();
+  });
+
+  it("rejects rebuilding before a workspace is selected", async () => {
+    const workspace = new WorkspaceRuntime(null, [], [], false);
+    const { app, ready } = await createApp(
+      { workspaceRoot: null, hiddenPaths: [], ignorePatterns: [], host: "127.0.0.1", port: 0 },
+      { workspace },
+    );
+    await ready;
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/workspace/rebuild",
+      headers: { "x-note-manager-request": "workspace-ui" },
+    });
+    expect(response.statusCode).toBe(409);
+    expect(response.json().message).toContain("选择");
+    await app.close();
+  });
+
+  it("rejects a duplicate rebuild while scanning", async () => {
+    class BusyWorkspaceRuntime extends WorkspaceRuntime {
+      override isScanning(): boolean {
+        return true;
+      }
+    }
+
+    const workspace = new BusyWorkspaceRuntime(null, [], [], false);
+    const { app, ready } = await createApp(
+      { workspaceRoot: null, hiddenPaths: [], ignorePatterns: [], host: "127.0.0.1", port: 0 },
+      { workspace },
+    );
+    await ready;
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/workspace/rebuild",
+      headers: { "x-note-manager-request": "workspace-ui" },
+    });
+    expect(response.statusCode).toBe(409);
+    expect(response.json().message).toContain("正在扫描");
+    await app.close();
+  });
+});

@@ -31,8 +31,19 @@ function finishedLabel(value: string | null): string {
   }).format(new Date(value));
 }
 
-export function ScanStatusPanel({ scan }: { scan: ScanStatus }) {
+export function ScanStatusPanel({
+  scan,
+  canRebuild,
+  rebuildPending,
+  onRebuild,
+}: {
+  scan: ScanStatus;
+  canRebuild: boolean;
+  rebuildPending: boolean;
+  onRebuild: () => void;
+}) {
   const [expanded, setExpanded] = useState(false);
+  const rebuildDisabled = !canRebuild || rebuildPending || scan.status === "scanning";
 
   useEffect(() => {
     if (scan.status === "failed" || scan.errorEntries > 0) setExpanded(true);
@@ -43,23 +54,34 @@ export function ScanStatusPanel({ scan }: { scan: ScanStatus }) {
 
   return (
     <section className={`scan-panel ${scan.status}`} aria-live="polite">
-      <button
-        className="scan-summary"
-        onClick={() => setExpanded((value) => !value)}
-        aria-expanded={expanded}
-      >
-        <span className="scan-indicator" aria-hidden="true" />
-        <span className="scan-summary-copy">
-          <strong>{statusLabel(scan)}</strong>
-          {scan.status === "scanning" && scan.currentPath && (
-            <small title={scan.currentPath}>{scan.currentPath}</small>
-          )}
-          {scan.status === "completed" && (
-            <small>{scan.indexedFiles} 篇笔记 · 跳过 {scan.skippedEntries} 项</small>
-          )}
-        </span>
-        <span aria-hidden="true">{expanded ? "⌃" : "⌄"}</span>
-      </button>
+      <div className="scan-toolbar">
+        <button
+          className="scan-summary"
+          onClick={() => setExpanded((value) => !value)}
+          aria-expanded={expanded}
+        >
+          <span className="scan-indicator" aria-hidden="true" />
+          <span className="scan-summary-copy">
+            <strong>{statusLabel(scan)}</strong>
+            {scan.status === "scanning" && scan.currentPath && (
+              <small title={scan.currentPath}>{scan.currentPath}</small>
+            )}
+            {scan.status === "completed" && (
+              <small>{scan.indexedFiles} 篇笔记 · 跳过 {scan.skippedEntries} 项</small>
+            )}
+          </span>
+          <span aria-hidden="true">{expanded ? "⌃" : "⌄"}</span>
+        </button>
+        <button
+          className="scan-rebuild"
+          onClick={onRebuild}
+          disabled={rebuildDisabled}
+          aria-label={scan.status === "scanning" ? "索引正在重建" : "手动重建索引"}
+          title={scan.status === "scanning" ? "索引正在重建" : "手动重建索引"}
+        >
+          <span aria-hidden="true">↻</span>
+        </button>
+      </div>
 
       {expanded && (
         <div className="scan-details">

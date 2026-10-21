@@ -6,7 +6,7 @@ import {
   useState,
 } from "react";
 import { ArticleSearchBar } from "./ArticleSearchBar";
-import { getDocument, getDocuments, getGitStatus, getWorkspace, searchDocuments, selectWorkspace } from "./api";
+import { getDocument, getDocuments, getGitStatus, getWorkspace, rebuildIndex, searchDocuments, selectWorkspace } from "./api";
 import { DocumentOutline } from "./DocumentOutline";
 import { ExportMenu } from "./ExportMenu";
 import { FolderTree } from "./FolderTree";
@@ -101,6 +101,7 @@ export default function App() {
   const [theme, setTheme] = useState<Theme>(initialTheme);
   const [toast, setToast] = useState("");
   const [selectingWorkspace, setSelectingWorkspace] = useState(false);
+  const [rebuildPending, setRebuildPending] = useState(false);
 
   const documentScrollRef = useRef<HTMLDivElement>(null);
   const articleRootRef = useRef<HTMLDivElement>(null);
@@ -197,6 +198,21 @@ export default function App() {
       setSelectingWorkspace(false);
     }
   }, [loadOverview, openDocument, showToast]);
+
+  const rebuildWorkspaceIndex = useCallback(async () => {
+    setRebuildPending(true);
+    setError("");
+    try {
+      const nextWorkspace = await rebuildIndex();
+      setWorkspace(nextWorkspace);
+      await loadOverview();
+      showToast(`索引重建完成，共 ${nextWorkspace.documentCount} 篇笔记`);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "无法重建工作区索引");
+    } finally {
+      setRebuildPending(false);
+    }
+  }, [loadOverview, showToast]);
 
   useEffect(() => {
     const onPopState = () => {
@@ -367,7 +383,12 @@ export default function App() {
       <aside className="sidebar">
         <div className="sidebar-heading"><span>文件</span><span className="count-badge">{documents.length}</span></div>
         <FolderTree documents={documents} activePath={activeDocument?.path ?? ""} onOpen={(path) => void openDocument(path)} />
-        <ScanStatusPanel scan={workspace.scan} />
+        <ScanStatusPanel
+          scan={workspace.scan}
+          canRebuild={workspace.configured}
+          rebuildPending={rebuildPending}
+          onRebuild={() => void rebuildWorkspaceIndex()}
+        />
       </aside>
 
       <section className={`result-panel ${query.trim() ? "visible" : ""}`}>

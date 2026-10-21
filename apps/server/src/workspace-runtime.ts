@@ -16,6 +16,7 @@ export interface WorkspaceSnapshot {
 }
 
 export class WorkspaceNotConfiguredError extends Error {}
+export class WorkspaceScanInProgressError extends Error {}
 
 export class WorkspaceRuntime {
   readonly events = new EventEmitter();
@@ -112,6 +113,37 @@ export class WorkspaceRuntime {
     this.stopWatcher();
   }
 
+  async rebuildIndex(changeKind = "index-rebuilt"): Promise<WorkspaceSnapshot> {
+    if (this.isScanning()) {
+      throw new WorkspaceScanInProgressError("工作区正在扫描，请等待当前扫描完成。");
+    }
+
+    const index = this.getIndex();
+    const workspaceName = path.basename(this.getRoot());
+    this.updateScanStatus({
+      ...createIdleScanStatus(),
+      status: "scanning",
+      workspaceName,
+      startedAt: new Date().toISOString(),
+    }, true);
+
+    try {
+      const report = await index.rebuild((status) => {
+        if (status.status === "scanning") this.updateScanStatus(status);
+      });
+      this.updateScanStatus(report, true);
+      const snapshot = this.snapshot();
+      this.events.emit("workspace-change", JSON.stringify({
+        kind: changeKind,
+        changedAt: new Date().toISOString(),
+      }));
+      return snapshot;
+    } catch (error) {
+      this.markScanFailed(workspaceName, error);
+      throw error;
+    }
+  }
+
   private startWatcher(): void {
     const workspaceRoot = this.getRoot();
     this.watcher = watch(workspaceRoot, { recursive: true }, (_eventType, fileName) => {
@@ -129,12 +161,7 @@ export class WorkspaceRuntime {
   private async rebuildAfterChange(): Promise<void> {
     if (this.isScanning()) return;
     try {
-      const report = await this.getIndex().rebuild((status) => this.updateScanStatus(status));
-      this.updateScanStatus(report, true);
-      this.events.emit("workspace-change", JSON.stringify({
-        kind: "files-changed",
-        changedAt: new Date().toISOString(),
-      }));
+      await this.rebuildIndex("files-changed");
     } catch (error) {
       this.events.emit("rebuild-error", error);
     }

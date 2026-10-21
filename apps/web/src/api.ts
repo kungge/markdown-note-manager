@@ -35,6 +35,18 @@ export async function selectWorkspace(): Promise<{
   return response.json();
 }
 
+export async function rebuildIndex(): Promise<WorkspaceInfo> {
+  const response = await fetch("/api/workspace/rebuild", {
+    method: "POST",
+    headers: { "x-note-manager-request": "workspace-ui" },
+  });
+  if (!response.ok) {
+    const payload = (await response.json().catch(() => null)) as { message?: string } | null;
+    throw new Error(payload?.message ?? `Request failed: ${response.status}`);
+  }
+  return response.json();
+}
+
 export async function getDocuments(): Promise<DocumentSummary[]> {
   const result = await getJson<{ documents: DocumentSummary[] }>("/api/documents");
   return result.documents;
